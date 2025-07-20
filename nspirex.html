@@ -242,12 +242,14 @@
       }
 
       // --- Rendering ---
-      function render() {
+      const origRender = render;
+      render = function() {
         const root = document.getElementById('nspirex-root');
         root.innerHTML = `
           <div class="nspirex-header">
             <h1 class="text-2xl font-bold">NspireX <span class="text-blue-400">Calculator Suite</span></h1>
             <div>
+              <button class="nspirex-btn" id="nspirex-stats-menu-btn" aria-label="AP Stats Menu">📈 Stats</button>
               <button class="nspirex-btn" id="nspirex-help-btn" aria-label="Help">?</button>
               <button class="nspirex-toggle" id="nspirex-theme-toggle" aria-label="Toggle Theme">${currentTheme==='dark'?'🌙':'☀️'}</button>
             </div>
@@ -321,10 +323,9 @@
           ${state.modal?renderModal(state.modal):''}
         `;
         setTheme(currentTheme);
-        // After render, attach event listeners
         attachEvents();
         renderGraph();
-      }
+      };
 
       function renderModal(modal) {
         if(modal.type==='help') {
@@ -332,12 +333,28 @@
         } else if(modal.type==='stats') {
           let {col, data, stats} = modal;
           return `<div class="nspirex-modal"><div class="nspirex-modal-content" role="dialog" aria-modal="true"><h2>Stats for ${col}</h2><ul><li>Count: ${stats.n}</li><li>Mean: ${stats.mean}</li><li>Median: ${stats.median}</li><li>Std Dev: ${stats.stddev}</li><li>Min: ${stats.min}</li><li>Max: ${stats.max}</li></ul><button class="nspirex-btn" id="modal-close">Close</button></div></div>`;
+        } else if(modal.type==='stats-menu') {
+          return `<div class="nspirex-modal"><div class="nspirex-modal-content" role="dialog" aria-modal="true">${modal.content}</div></div>`;
         }
-        return '';
+        return origRenderModal(modal);
       }
 
       // --- Event Handlers ---
-      function attachEvents() {
+      const origAttachEvents = attachEvents;
+      attachEvents = function() {
+        origAttachEvents();
+        let statsBtn = document.getElementById('nspirex-stats-menu-btn');
+        if(statsBtn) statsBtn.onclick = showStatsMenu;
+        // Modal stats wizard buttons
+        let modal = document.querySelector('.nspirex-modal-content');
+        if(modal) {
+          modal.querySelectorAll('[data-stats-wizard]').forEach(btn => {
+            btn.onclick = function() {
+              // Placeholder: will implement each wizard in next steps
+              alert('Wizard: ' + btn.getAttribute('data-stats-wizard'));
+            };
+          });
+        }
         // Theme toggle
         document.getElementById('nspirex-theme-toggle').onclick = () => {
           setTheme(currentTheme==='dark'?'light':'dark');
@@ -455,7 +472,7 @@
           state.graph.expr = '';
           renderGraph();
         };
-      }
+      };
 
       function evalCalc() {
         try {
@@ -508,6 +525,32 @@
             }
           }
         });
+      }
+
+      function showStatsMenu() {
+        state.modal = {
+          type: 'stats-menu',
+          content: `<h2>AP Statistics Wizards</h2>
+            <ul style='margin-bottom:1em;'>
+              <li><button class='nspirex-btn' data-stats-wizard='1var'>One-Variable Stats</button></li>
+              <li><button class='nspirex-btn' data-stats-wizard='2var'>Two-Variable Stats</button></li>
+              <li><button class='nspirex-btn' data-stats-wizard='z-interval'>Z Interval</button></li>
+              <li><button class='nspirex-btn' data-stats-wizard='t-interval'>T Interval</button></li>
+              <li><button class='nspirex-btn' data-stats-wizard='2-samp-t-interval'>2-Sample T Interval</button></li>
+              <li><button class='nspirex-btn' data-stats-wizard='1-prop-z-interval'>1-Prop Z Interval</button></li>
+              <li><button class='nspirex-btn' data-stats-wizard='2-prop-z-interval'>2-Prop Z Interval</button></li>
+              <li><button class='nspirex-btn' data-stats-wizard='z-test'>Z Test</button></li>
+              <li><button class='nspirex-btn' data-stats-wizard='t-test'>T Test</button></li>
+              <li><button class='nspirex-btn' data-stats-wizard='2-samp-t-test'>2-Sample T Test</button></li>
+              <li><button class='nspirex-btn' data-stats-wizard='1-prop-z-test'>1-Prop Z Test</button></li>
+              <li><button class='nspirex-btn' data-stats-wizard='2-prop-z-test'>2-Prop Z Test</button></li>
+              <li><button class='nspirex-btn' data-stats-wizard='chi-square'>Chi-Square Test</button></li>
+              <li><button class='nspirex-btn' data-stats-wizard='anova'>ANOVA</button></li>
+              <li><button class='nspirex-btn' data-stats-wizard='visualizations'>Visualizations</button></li>
+            </ul>
+            <button class='nspirex-btn' id='modal-close'>Close</button>`
+        };
+        render();
       }
 
       // Initial render
