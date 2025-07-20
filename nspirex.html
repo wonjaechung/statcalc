@@ -177,7 +177,342 @@
   <!-- The app will be rendered here by JavaScript -->
   <div id="nspirex-root"></div>
   <script>
-    // ... The full app code will be injected here ...
+    // NspireX App Logic
+    (function() {
+      // --- Theme Management ---
+      const themes = {
+        dark: {
+          '--bg': '#18181b', '--fg': '#f4f4f5', '--panel': '#23232a', '--input': '#18181b', '--btn': '#3b82f6'
+        },
+        light: {
+          '--bg': '#f4f4f5', '--fg': '#23232a', '--panel': '#fff', '--input': '#f4f4f5', '--btn': '#3b82f6'
+        }
+      };
+      let currentTheme = localStorage.getItem('nspirex-theme') || 'dark';
+      function setTheme(theme) {
+        currentTheme = theme;
+        Object.entries(themes[theme]).forEach(([k,v]) => document.body.style.setProperty(k, v));
+        localStorage.setItem('nspirex-theme', theme);
+      }
+      setTheme(currentTheme);
+
+      // --- App State ---
+      let state = {
+        calc: {
+          input: '',
+          history: JSON.parse(localStorage.getItem('nspirex-calc-history')||'[]'),
+          error: ''
+        },
+        spreadsheet: {
+          cols: 10,
+          rows: 100,
+          data: JSON.parse(localStorage.getItem('nspirex-sheet-data')||'null') || Array.from({length:100},()=>Array(10).fill('')),
+          selected: {row:0, col:0},
+          editing: false,
+          editValue: ''
+        },
+        graph: {
+          expr: 'sin(x)',
+          chart: null
+        },
+        modal: null
+      };
+
+      // --- Utility Functions ---
+      function saveState() {
+        localStorage.setItem('nspirex-calc-history', JSON.stringify(state.calc.history));
+        localStorage.setItem('nspirex-sheet-data', JSON.stringify(state.spreadsheet.data));
+      }
+      function parseCellFormula(val, sheetData) {
+        if(typeof val !== 'string' || !val.startsWith('=')) return val;
+        try {
+          // Replace A1, B2, ... with values
+          let expr = val.slice(1).replace(/([A-Z]+)(\d+)/g, (m, col, row) => {
+            let c = col.charCodeAt(0)-65, r = parseInt(row)-1;
+            let v = sheetData[r] && sheetData[r][c];
+            return (typeof v === 'number' || (v && v.match && v.match(/^[-+]?\d+(\.\d+)?$/))) ? v : '0';
+          });
+          return math.evaluate(expr);
+        } catch(e) { return 'ERR'; }
+      }
+      function getColName(idx) {
+        let name = '';
+        do { name = String.fromCharCode(65 + (idx % 26)) + name; idx = Math.floor(idx/26)-1; } while(idx>=0);
+        return name;
+      }
+
+      // --- Rendering ---
+      function render() {
+        const root = document.getElementById('nspirex-root');
+        root.innerHTML = `
+          <div class="nspirex-header">
+            <h1 class="text-2xl font-bold">NspireX <span class="text-blue-400">Calculator Suite</span></h1>
+            <div>
+              <button class="nspirex-btn" id="nspirex-help-btn" aria-label="Help">?</button>
+              <button class="nspirex-toggle" id="nspirex-theme-toggle" aria-label="Toggle Theme">${currentTheme==='dark'?'🌙':'☀️'}</button>
+            </div>
+          </div>
+          <div class="nspirex-container">
+            <div class="nspirex-panel" aria-label="Calculator">
+              <h2 class="font-semibold text-lg mb-2">Calculator</h2>
+              <input class="nspirex-input" id="calc-input" aria-label="Calculator Input" autocomplete="off" value="${state.calc.input.replace(/"/g,'&quot;')}">
+              <div class="nspirex-history" id="calc-history" tabindex="0" aria-label="Calculation History">
+                ${state.calc.history.slice(-20).reverse().map(e=>`<div class="nspirex-history-entry"><span class="text-blue-400">${e.input}</span> = <span class="font-bold">${e.output}</span></div>`).join('')}
+              </div>
+              <div class="text-red-400 text-xs min-h-[1.2em]">${state.calc.error||''}</div>
+              <div class="flex flex-wrap gap-2 mt-2">
+                <button class="nspirex-btn" data-calc-btn="7">7</button>
+                <button class="nspirex-btn" data-calc-btn="8">8</button>
+                <button class="nspirex-btn" data-calc-btn="9">9</button>
+                <button class="nspirex-btn" data-calc-btn="/">÷</button>
+                <button class="nspirex-btn" data-calc-btn="sqrt(">√</button>
+                <button class="nspirex-btn" data-calc-btn="^">^</button>
+                <button class="nspirex-btn" data-calc-btn="4">4</button>
+                <button class="nspirex-btn" data-calc-btn="5">5</button>
+                <button class="nspirex-btn" data-calc-btn="6">6</button>
+                <button class="nspirex-btn" data-calc-btn="*">×</button>
+                <button class="nspirex-btn" data-calc-btn="(">(</button>
+                <button class="nspirex-btn" data-calc-btn=")">)</button>
+                <button class="nspirex-btn" data-calc-btn="1">1</button>
+                <button class="nspirex-btn" data-calc-btn="2">2</button>
+                <button class="nspirex-btn" data-calc-btn="3">3</button>
+                <button class="nspirex-btn" data-calc-btn="-">-</button>
+                <button class="nspirex-btn" data-calc-btn="sin(">sin</button>
+                <button class="nspirex-btn" data-calc-btn="cos(">cos</button>
+                <button class="nspirex-btn" data-calc-btn="0">0</button>
+                <button class="nspirex-btn" data-calc-btn=".">.</button>
+                <button class="nspirex-btn" data-calc-btn=",">,</button>
+                <button class="nspirex-btn" data-calc-btn="+">+</button>
+                <button class="nspirex-btn" data-calc-btn="tan(">tan</button>
+                <button class="nspirex-btn" data-calc-btn="log(">log</button>
+                <button class="nspirex-btn" data-calc-btn="ln(">ln</button>
+                <button class="nspirex-btn" id="calc-eval">=</button>
+                <button class="nspirex-btn" id="calc-clear">C</button>
+              </div>
+            </div>
+            <div class="nspirex-panel" aria-label="Spreadsheet">
+              <h2 class="font-semibold text-lg mb-2">Spreadsheet</h2>
+              <div style="overflow:auto; max-height:320px;">
+                <table class="nspirex-spreadsheet-table" id="sheet-table">
+                  <thead><tr><th></th>${Array(state.spreadsheet.cols).fill(0).map((_,i)=>`<th>${getColName(i)}</th>`).join('')}</tr></thead>
+                  <tbody>
+                    ${state.spreadsheet.data.map((row,ri)=>`<tr><td class="text-gray-400">${ri+1}</td>${row.map((cell,ci)=>`<td class="${state.spreadsheet.selected.row===ri&&state.spreadsheet.selected.col===ci?'selected':''}" data-row="${ri}" data-col="${ci}">${state.spreadsheet.editing&&state.spreadsheet.selected.row===ri&&state.spreadsheet.selected.col===ci?`<input class='nspirex-input' id='sheet-edit' value='${state.spreadsheet.editValue.replace(/"/g,'&quot;')}' />`:parseCellFormula(cell,state.spreadsheet.data)}</td>`).join('')}</tr>`).join('')}
+                  </tbody>
+                </table>
+              </div>
+              <div class="flex gap-2 mt-2">
+                <button class="nspirex-btn" id="sheet-add-row">+ Row</button>
+                <button class="nspirex-btn" id="sheet-add-col">+ Col</button>
+                <button class="nspirex-btn" id="sheet-save">💾 Save</button>
+                <button class="nspirex-btn" id="sheet-load">⭮ Load</button>
+                <button class="nspirex-btn" id="sheet-stats">📊 Stats</button>
+              </div>
+            </div>
+            <div class="nspirex-panel" aria-label="Graphing">
+              <h2 class="font-semibold text-lg mb-2">Graphing</h2>
+              <input class="nspirex-input" id="graph-expr" aria-label="Graph Expression" value="${state.graph.expr.replace(/"/g,'&quot;')}">
+              <canvas id="graph-canvas" class="nspirex-graph-canvas" width="400" height="260" aria-label="Function Graph"></canvas>
+              <div class="flex gap-2 mt-2">
+                <button class="nspirex-btn" id="graph-plot">Plot</button>
+                <button class="nspirex-btn" id="graph-clear">Clear</button>
+              </div>
+            </div>
+          </div>
+          ${state.modal?renderModal(state.modal):''}
+        `;
+        setTheme(currentTheme);
+        // After render, attach event listeners
+        attachEvents();
+        renderGraph();
+      }
+
+      function renderModal(modal) {
+        if(modal.type==='help') {
+          return `<div class="nspirex-modal"><div class="nspirex-modal-content" role="dialog" aria-modal="true"><h2>Help & Shortcuts</h2><ul><li><b>Calculator:</b> Type expressions, use up/down to browse history, Enter to evaluate.</li><li><b>Spreadsheet:</b> Click or use arrow keys to select, Enter to edit, formulas start with = (e.g. =A1+B2).</li><li><b>Graphing:</b> Enter a function of x (e.g. sin(x)+x^2), click Plot.</li><li><b>Stats:</b> Click 📊 in spreadsheet to analyze a column.</li><li><b>Dark/Light Mode:</b> Click the moon/sun icon.</li><li><b>Save/Load:</b> Spreadsheet and calculator history are auto-saved, or use buttons.</li></ul><button class="nspirex-btn" id="modal-close">Close</button></div></div>`;
+        } else if(modal.type==='stats') {
+          let {col, data, stats} = modal;
+          return `<div class="nspirex-modal"><div class="nspirex-modal-content" role="dialog" aria-modal="true"><h2>Stats for ${col}</h2><ul><li>Count: ${stats.n}</li><li>Mean: ${stats.mean}</li><li>Median: ${stats.median}</li><li>Std Dev: ${stats.stddev}</li><li>Min: ${stats.min}</li><li>Max: ${stats.max}</li></ul><button class="nspirex-btn" id="modal-close">Close</button></div></div>`;
+        }
+        return '';
+      }
+
+      // --- Event Handlers ---
+      function attachEvents() {
+        // Theme toggle
+        document.getElementById('nspirex-theme-toggle').onclick = () => {
+          setTheme(currentTheme==='dark'?'light':'dark');
+          render();
+        };
+        // Help
+        document.getElementById('nspirex-help-btn').onclick = () => {
+          state.modal = {type:'help'}; render();
+        };
+        // Modal close
+        let closeBtn = document.getElementById('modal-close');
+        if(closeBtn) closeBtn.onclick = () => { state.modal = null; render(); };
+        // Calculator input
+        let calcInput = document.getElementById('calc-input');
+        calcInput.oninput = e => { state.calc.input = e.target.value; state.calc.error=''; };
+        calcInput.onkeydown = e => {
+          if(e.key==='Enter') { evalCalc(); }
+          else if(e.key==='ArrowUp') {
+            let idx = state.calc.history.length-1;
+            if(idx>=0) state.calc.input = state.calc.history[idx].input;
+            render();
+          }
+        };
+        document.querySelectorAll('[data-calc-btn]').forEach(btn=>{
+          btn.onclick = () => { state.calc.input += btn.getAttribute('data-calc-btn'); render(); };
+        });
+        document.getElementById('calc-eval').onclick = evalCalc;
+        document.getElementById('calc-clear').onclick = () => { state.calc.input=''; state.calc.error=''; render(); };
+        // Spreadsheet
+        let sheetTable = document.getElementById('sheet-table');
+        sheetTable.onclick = e => {
+          let td = e.target.closest('td[data-row]');
+          if(td) {
+            let r = +td.getAttribute('data-row'), c = +td.getAttribute('data-col');
+            state.spreadsheet.selected = {row:r, col:c};
+            if(state.spreadsheet.editing) { state.spreadsheet.editing=false; }
+            render();
+          }
+        };
+        sheetTable.ondblclick = e => {
+          let td = e.target.closest('td[data-row]');
+          if(td) {
+            let r = +td.getAttribute('data-row'), c = +td.getAttribute('data-col');
+            state.spreadsheet.selected = {row:r, col:c};
+            state.spreadsheet.editing = true;
+            state.spreadsheet.editValue = state.spreadsheet.data[r][c];
+            render();
+            setTimeout(()=>{
+              let input = document.getElementById('sheet-edit');
+              if(input) input.focus();
+            },10);
+          }
+        };
+        let sheetEdit = document.getElementById('sheet-edit');
+        if(sheetEdit) {
+          sheetEdit.oninput = e => { state.spreadsheet.editValue = e.target.value; };
+          sheetEdit.onkeydown = e => {
+            if(e.key==='Enter') {
+              let {row,col} = state.spreadsheet.selected;
+              state.spreadsheet.data[row][col] = state.spreadsheet.editValue;
+              state.spreadsheet.editing = false;
+              saveState();
+              render();
+            } else if(e.key==='Escape') {
+              state.spreadsheet.editing = false; render();
+            }
+          };
+        }
+        document.getElementById('sheet-add-row').onclick = () => {
+          state.spreadsheet.data.push(Array(state.spreadsheet.cols).fill(''));
+          state.spreadsheet.rows++;
+          saveState();
+          render();
+        };
+        document.getElementById('sheet-add-col').onclick = () => {
+          state.spreadsheet.data.forEach(row=>row.push(''));
+          state.spreadsheet.cols++;
+          saveState();
+          render();
+        };
+        document.getElementById('sheet-save').onclick = () => { saveState(); alert('Saved!'); };
+        document.getElementById('sheet-load').onclick = () => {
+          let d = JSON.parse(localStorage.getItem('nspirex-sheet-data')||'null');
+          if(d) { state.spreadsheet.data = d; state.spreadsheet.rows = d.length; state.spreadsheet.cols = d[0].length; render(); }
+        };
+        document.getElementById('sheet-stats').onclick = () => {
+          let c = state.spreadsheet.selected.col;
+          let colName = getColName(c);
+          let data = state.spreadsheet.data.map(row=>parseFloat(row[c])).filter(x=>!isNaN(x));
+          if(data.length===0) return alert('No numeric data in this column!');
+          let stats = {
+            n: data.length,
+            mean: math.mean(data).toFixed(4),
+            median: math.median(data).toFixed(4),
+            stddev: math.std(data).toFixed(4),
+            min: Math.min(...data),
+            max: Math.max(...data)
+          };
+          state.modal = {type:'stats', col:colName, data, stats};
+          render();
+        };
+        // Spreadsheet keyboard navigation
+        sheetTable.onkeydown = e => {
+          let {row,col} = state.spreadsheet.selected;
+          if(e.key==='ArrowDown') { if(row<state.spreadsheet.rows-1) state.spreadsheet.selected.row++; render(); }
+          else if(e.key==='ArrowUp') { if(row>0) state.spreadsheet.selected.row--; render(); }
+          else if(e.key==='ArrowLeft') { if(col>0) state.spreadsheet.selected.col--; render(); }
+          else if(e.key==='ArrowRight') { if(col<state.spreadsheet.cols-1) state.spreadsheet.selected.col++; render(); }
+          else if(e.key==='Enter') { state.spreadsheet.editing=true; state.spreadsheet.editValue=state.spreadsheet.data[row][col]; render(); setTimeout(()=>{let input=document.getElementById('sheet-edit');if(input)input.focus();},10); }
+        };
+        // Graphing
+        document.getElementById('graph-expr').oninput = e => { state.graph.expr = e.target.value; };
+        document.getElementById('graph-plot').onclick = renderGraph;
+        document.getElementById('graph-clear').onclick = () => {
+          state.graph.expr = '';
+          renderGraph();
+        };
+      }
+
+      function evalCalc() {
+        try {
+          let result = math.evaluate(state.calc.input);
+          state.calc.history.push({input: state.calc.input, output: result});
+          state.calc.input = '';
+          state.calc.error = '';
+          saveState();
+          render();
+        } catch(e) {
+          state.calc.error = e.message;
+          render();
+        }
+      }
+
+      function renderGraph() {
+        let canvas = document.getElementById('graph-canvas');
+        if(!canvas) return;
+        let ctx = canvas.getContext('2d');
+        if(state.graph.chart) { state.graph.chart.destroy(); state.graph.chart = null; }
+        let expr = state.graph.expr;
+        if(!expr) { ctx.clearRect(0,0,canvas.width,canvas.height); return; }
+        let xs = [], ys = [];
+        for(let x=-10;x<=10;x+=0.05) {
+          xs.push(x);
+          try {
+            let y = math.evaluate(expr, {x});
+            ys.push(typeof y==='number'&&isFinite(y)?y:null);
+          } catch { ys.push(null); }
+        }
+        state.graph.chart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: xs,
+            datasets: [{
+              label: expr,
+              data: ys,
+              borderColor: '#3b82f6',
+              backgroundColor: 'rgba(59,130,246,0.1)',
+              spanGaps: true,
+              pointRadius: 0
+            }]
+          },
+          options: {
+            responsive: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { title: { display: true, text: 'x' } },
+              y: { title: { display: true, text: 'y' } }
+            }
+          }
+        });
+      }
+
+      // Initial render
+      render();
+    })();
   </script>
 </body>
 </html>
